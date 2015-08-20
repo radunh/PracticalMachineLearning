@@ -1,0 +1,165 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Radu Craioveanu"
+date: "August 18, 2015"
+output: html_document
+---
+
+#Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+#Data 
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.  
+
+#Project Goals
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. The Report will be describing how the model was built, how cross validation was used, what the expected out of sample error is, and why various choices were made. The prediction model will also be used to predict 20 different test cases. 
+
+The classe variable has the following categories to determine how an exercise is performed.
+
+  Class A: exactly according to the specification
+  Class B: throwing the elbows to the front
+  Class C: lifting the dumbbell only halfway
+  Class D: lowering the dumbbell only halfway
+  Class E: throwing the hips to the front
+
+#Getting and Cleaning Data
+
+##Setup Environment
+
+```{r, echo=TRUE, include=TRUE, message=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(knitr)
+```
+
+```{r, echo=FALSE,include=FALSE}
+setwd("~/OneDrive/Radu Craioveanu/School/Data Science at John Hopkins on Coursera/Practical Machine Learning")
+knitr::opts_chunk$set(echo=TRUE,fig.path = './figure/')
+```
+
+##Download and Read Data
+
+Download the data fiels and read them into data frames to be used in the project
+
+```{r, echo=TRUE, include=TRUE}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile, method="curl")
+}
+#read the files into the respective data frames
+trainRaw <- read.csv("./data/pml-training.csv")
+testRaw <- read.csv("./data/pml-testing.csv")
+#check the number observations and features of each data set
+cat("Raw Train Observations =", dim(trainRaw)[1], "with Features = ", dim(trainRaw)[2])
+cat("Raw Test Observations =", dim(testRaw)[1], "with Features = ", dim(testRaw)[2])
+```
+
+##Clean Data
+
+Remove NA values, unnecessary columns, and allow for a smaller sample size to get an optimal algorithm. 
+
+```{r}
+#filter our the missing values (NA) in both sets
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0] 
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0]
+
+#save classe before we clean up trainRaw
+classe <- trainRaw$classe
+#get rid of some columns that have no value
+trainRemove <- grepl("^X|timestamp|window", names(trainRaw))
+trainRaw <- trainRaw[, !trainRemove]
+trainClean <- trainRaw[, sapply(trainRaw, is.numeric)]
+trainClean$classe <- classe
+#repeat for the test set
+testRemove <- grepl("^X|timestamp|window", names(testRaw))
+testRaw <- testRaw[, !testRemove]
+testClean <- testRaw[, sapply(testRaw, is.numeric)]
+
+#new set dimenstions
+cat("Clean Train Observations =", dim(trainClean)[1], "with Features = ", dim(trainClean)[2])
+cat("Clean Test Observations =", dim(testClean)[1], "with Features = ", dim(testClean)[2])
+
+#slim down the data set, in particular the training set, as the algorithms may take too long, also set some data aside for validation
+set.seed(9595)
+trainIndex <- createDataPartition(y = trainClean$classe,p=0.8,list=FALSE)
+trainClean <- trainClean[trainIndex,]
+cat("Clean Train Observations =", dim(trainClean)[1], "with Features = ", dim(trainClean)[2])
+
+#create a train and a validation set with a 70% and 30% content respectively
+set.seed(7676)
+trainCleanIndex <- createDataPartition(y = trainClean$classe,p=0.7,list=FALSE)
+trainSet <- trainClean[trainCleanIndex,]
+validSet <- trainClean[-trainCleanIndex,]
+
+#new set
+cat("Set Train Observations =", dim(trainSet)[1], "with Features = ", dim(trainSet)[2])
+cat("Set Validation Observations =", dim(validSet)[1], "with Features = ", dim(validSet)[2])
+```
+
+#Modeling 
+
+There were many options available here, but the main decision was driven by some of the performance requirements as well as the number we were able to get on the Accuracy and Sampling Error.  I chose the Random Forest algorithm from the randomForest library as opposed to the one from the caret library, as the latter took very long due to the thousands of trees it created.
+
+Run the model
+
+```{r}
+#the caret package took too long
+#controlRf <- trainControl(method = "cv", 10)
+#modelRf <- train(classe ~., data=trainSet, method = "rf", trControl = controlRf, 
+#                 prox = TRUE, allowParallel = TRUE)
+
+#the rendomForest library train worked much better 
+modelRf = randomForest(classe ~.,data = trainSet, importance=TRUE, proximity = TRUE)
+modelRf
+```
+
+Perform the validation and check the accuracy
+
+```{r}
+predictRf <- predict(modelRf,validSet)
+cMat <- confusionMatrix(validSet$classe, predictRf)
+#accuracy <- postResample(predictRf,testSet$classe)
+outOfSampleError <- 1 - as.numeric(confusionMatrix(validSet$classe, predictRf)$overall[1])
+accuracy <- cMat$overall[1]
+cat("Estimated accuracy: ", accuracy, "with OOS Error: ",outOfSampleError)
+```
+
+#Predicting
+
+```{r}
+#remove the problem_id column
+testClean <- testClean[,-length(names(testClean))]
+result <- predict(modelRf, testClean)
+result
+```
+
+#Appendix
+
+##Tree visualization
+
+```{r}
+treeModel <- rpart(classe ~., data=trainSet, method = "class")
+prp(treeModel)
+```
